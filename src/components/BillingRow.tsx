@@ -1,207 +1,289 @@
-import React, { useState } from 'react';
-import { Minus, Plus, Trash2, Search, Edit2, Check } from 'lucide-react';
-import { BillItem } from '../types';
+import React, { useState, useRef, useEffect } from 'react';
+import { Minus, Plus, Trash2, Search, X, Check } from 'lucide-react';
+import { BillItem, Product } from '../types';
+import { searchProducts } from '../services/productSearch';
 import { formatINR } from '../utils/currency';
 
 interface BillingRowProps {
   item: BillItem;
   rowIndex: number;
-  onOpenSearch: (rowId: string) => void;
+  products: Product[];
+  isLastRow: boolean;
+  onSelectProduct: (rowId: string, product: Product) => void;
   onUpdateQuantity: (rowId: string, newQty: number) => void;
   onUpdatePrice: (rowId: string, newPrice: number) => void;
   onRemove: (rowId: string) => void;
+  onClearRow: (rowId: string) => void;
 }
 
 export const BillingRow: React.FC<BillingRowProps> = ({
   item,
   rowIndex,
-  onOpenSearch,
+  products,
+  isLastRow,
+  onSelectProduct,
   onUpdateQuantity,
   onUpdatePrice,
-  onRemove
+  onRemove,
+  onClearRow
 }) => {
-  const [isEditingPrice, setIsEditingPrice] = useState(false);
-  const [tempPrice, setTempPrice] = useState(item.unitPrice.toString());
-  const [isEditingQty, setIsEditingQty] = useState(false);
-  const [tempQty, setTempQty] = useState(item.quantity.toString());
+  const [query, setQuery] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+  const [priceInput, setPriceInput] = useState(item.unitPrice ? item.unitPrice.toString() : '');
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const isFilled = Boolean(item.nameTamil && item.nameTamil.trim() !== '');
 
-  const handleSavePrice = () => {
-    const p = parseFloat(tempPrice);
-    if (!isNaN(p) && p >= 0) {
-      onUpdatePrice(item.id, p);
-    } else {
-      setTempPrice(item.unitPrice.toString());
-    }
-    setIsEditingPrice(false);
+  // Keep price input in sync when product changes
+  useEffect(() => {
+    setPriceInput(item.unitPrice ? item.unitPrice.toString() : '');
+  }, [item.unitPrice, item.productId]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(e.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const suggestions = isOpen ? searchProducts(query, products) : [];
+
+  const handleSelect = (prod: Product) => {
+    onSelectProduct(item.id, prod);
+    setQuery('');
+    setPriceInput(prod.price.toString());
+    setIsOpen(false);
   };
 
-  const handleSaveQty = () => {
-    const q = parseFloat(tempQty);
-    if (!isNaN(q) && q > 0) {
-      onUpdateQuantity(item.id, q);
-    } else {
-      setTempQty(item.quantity.toString());
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      if (suggestions.length > 0) {
+        handleSelect(suggestions[0]);
+      }
+    } else if (e.key === 'Escape') {
+      setIsOpen(false);
     }
-    setIsEditingQty(false);
   };
 
-  // 1. EMPTY ROW
-  if (!isFilled) {
-    return (
-      <div className="bg-white rounded-2xl border-2 border-dashed border-emerald-300/80 p-3 shadow-sm hover:border-emerald-500 transition-all flex items-center justify-between gap-2">
-        <button
-          onClick={() => onOpenSearch(item.id)}
-          className="flex-1 flex items-center gap-2.5 py-3 px-4 bg-emerald-50/70 active:bg-emerald-100/90 rounded-xl text-emerald-800 font-bold text-base md:text-lg text-left transition-all border border-emerald-200/80 shadow-xs"
-        >
-          <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-            <Search className="w-4 h-4 stroke-[3]" />
-          </div>
-          <span className="font-tamil text-emerald-900 tracking-wide">[ பொருளை தேடுக ]</span>
-        </button>
+  const handlePriceChange = (val: string) => {
+    setPriceInput(val);
+    const num = parseFloat(val);
+    if (!isNaN(num) && num >= 0) {
+      onUpdatePrice(item.id, num);
+    } else if (val === '') {
+      onUpdatePrice(item.id, 0);
+    }
+  };
 
-        <div className="flex items-center gap-2 px-2 text-slate-400 font-semibold text-lg shrink-0">
-          <span className="w-8 text-center text-slate-500 font-mono">1</span>
-          <span className="text-slate-400 font-mono text-base font-bold">₹0</span>
-        </div>
-      </div>
-    );
-  }
-
-  // 2. FILLED ROW
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-3.5 shadow-sm hover:shadow-md transition-all space-y-2.5">
-      <div className="flex items-center justify-between gap-2">
-        {/* Product Name & Unit Price (Left Column) */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center shrink-0">
-              {rowIndex + 1}
-            </span>
-            <button
-              onClick={() => onOpenSearch(item.id)}
-              className="text-left font-bold text-xl text-slate-900 font-tamil truncate hover:text-emerald-700 transition-colors leading-tight"
-            >
-              {item.nameTamil}
-            </button>
-          </div>
+    <div className={`bg-white rounded-2xl border transition-all duration-150 p-3 relative ${
+      isOpen ? 'z-40 border-emerald-500 shadow-xl ring-2 ring-emerald-500/20' : 'border-slate-200 shadow-xs hover:border-slate-300'
+    }`}>
+      {/* Top Line: Product Name Fillup & Delete */}
+      <div className="flex items-center gap-2 relative">
+        <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center shrink-0">
+          {rowIndex + 1}
+        </span>
 
-          {/* Unit Price Display & Inline Editor */}
-          <div className="mt-1 ml-8 flex items-center gap-1.5">
-            {isEditingPrice ? (
-              <div className="flex items-center gap-1 bg-amber-50 p-1 rounded-lg border border-amber-300">
-                <span className="text-xs text-slate-600 font-bold">₹</span>
-                <input
-                  type="number"
-                  value={tempPrice}
-                  onChange={(e) => setTempPrice(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSavePrice()}
-                  className="w-16 px-1 py-0.5 text-sm font-bold text-slate-900 bg-white border border-amber-400 rounded focus:outline-none"
-                  autoFocus
-                />
-                <button
-                  onClick={handleSavePrice}
-                  className="p-1 bg-emerald-600 text-white rounded hover:bg-emerald-700"
-                >
-                  <Check className="w-3.5 h-3.5 stroke-[3]" />
-                </button>
-              </div>
-            ) : (
+        {/* Product Autocomplete Fillup Input */}
+        {!isFilled ? (
+          <div className="relative flex-1">
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setIsOpen(true);
+              }}
+              onFocus={() => setIsOpen(true)}
+              onKeyDown={handleKeyDown}
+              placeholder="பொருளை தட்டச்சு செய்க (எ.கா: ku, man, kar)..."
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck="false"
+              className="w-full pl-9 pr-8 py-2.5 bg-slate-50 border-2 border-emerald-400 focus:border-emerald-600 focus:bg-white rounded-xl text-base font-semibold text-slate-900 placeholder:text-slate-400 placeholder:text-sm placeholder:font-normal focus:outline-none transition-all font-tamil"
+            />
+            <Search className="w-4 h-4 text-emerald-600 absolute left-3 top-3.5" />
+            {query && (
               <button
+                type="button"
                 onClick={() => {
-                  setTempPrice(item.unitPrice.toString());
-                  setIsEditingPrice(true);
+                  setQuery('');
+                  inputRef.current?.focus();
                 }}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-emerald-700 bg-slate-100 hover:bg-emerald-50 px-2 py-0.5 rounded-md transition-colors border border-slate-200/60"
-                title="விலையை மாற்ற தட்டவும்"
+                className="absolute right-2.5 top-2.5 p-1 text-slate-400 hover:text-slate-600"
               >
-                <span>{formatINR(item.unitPrice)} / {item.unit}</span>
-                <Edit2 className="w-2.5 h-2.5 text-slate-400" />
-                {item.isCustomPrice && (
-                  <span className="text-[10px] text-amber-600 font-bold">(மாற்றப்பட்டது)</span>
-                )}
+                <X className="w-4 h-4" />
               </button>
             )}
           </div>
-        </div>
-
-        {/* Row Amount (Right Column) */}
-        <div className="text-right shrink-0">
-          <div className="text-2xl font-black text-slate-900 font-tamil tracking-tight">
-            {formatINR(item.total)}
-          </div>
-        </div>
-      </div>
-
-      {/* Controls Row: Quantity (Center) & Delete Action */}
-      <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-slate-500 font-tamil">அளவு:</span>
-          {/* Quantity Controls */}
-          <div className="flex items-center bg-slate-100 rounded-2xl p-1 border border-slate-200 shadow-inner">
+        ) : (
+          <div className="flex-1 flex items-center justify-between min-w-0 bg-emerald-50/50 px-3 py-1.5 rounded-xl border border-emerald-200/60">
+            <div className="flex items-center gap-2 min-w-0">
+              <h3 className="text-lg md:text-xl font-black text-slate-900 font-tamil truncate">
+                {item.nameTamil}
+              </h3>
+              <span className="text-xs text-slate-500 font-semibold shrink-0">
+                ({item.unit})
+              </span>
+            </div>
             <button
-              onClick={() => onUpdateQuantity(item.id, Math.max(1, item.quantity - 1))}
-              disabled={item.quantity <= 1}
-              className={`w-11 h-11 rounded-xl flex items-center justify-center font-black text-xl transition-all ${
-                item.quantity <= 1
-                  ? 'bg-slate-200/60 text-slate-400 cursor-not-allowed'
-                  : 'bg-white text-slate-800 shadow-sm active:bg-slate-200 active:scale-95'
-              }`}
-              title="குறைக்க"
+              type="button"
+              onClick={() => onClearRow(item.id)}
+              className="p-1 text-slate-400 hover:text-rose-600 rounded-lg transition-colors ml-1"
+              title="பொருளை மாற்றுக"
             >
-              <Minus className="w-5 h-5 stroke-[3]" />
-            </button>
-
-            {isEditingQty ? (
-              <div className="flex items-center gap-1 px-1">
-                <input
-                  type="number"
-                  value={tempQty}
-                  onChange={(e) => setTempQty(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSaveQty()}
-                  className="w-12 text-center text-lg font-black text-slate-900 bg-white border border-emerald-500 rounded-lg focus:outline-none"
-                  autoFocus
-                />
-                <button
-                  onClick={handleSaveQty}
-                  className="p-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
-                >
-                  <Check className="w-4 h-4 stroke-[3]" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => {
-                  setTempQty(item.quantity.toString());
-                  setIsEditingQty(true);
-                }}
-                className="w-12 text-center text-2xl font-black text-slate-900 font-mono hover:text-emerald-700 transition-colors"
-                title="அளவை மாற்ற தட்டவும்"
-              >
-                {item.quantity}
-              </button>
-            )}
-
-            <button
-              onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
-              className="w-11 h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-sm flex items-center justify-center font-black text-xl active:scale-95 transition-all"
-              title="அதிகரிக்க"
-            >
-              <Plus className="w-5 h-5 stroke-[3]" />
+              <X className="w-4 h-4 stroke-[2.5]" />
             </button>
           </div>
-        </div>
+        )}
 
         {/* Delete Row Button */}
         <button
+          type="button"
           onClick={() => onRemove(item.id)}
-          className="w-11 h-11 rounded-2xl bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-600 border border-rose-200/80 flex items-center justify-center transition-all active:scale-90 shadow-2xs"
-          title="நீக்க"
+          disabled={isLastRow && !isFilled}
+          className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all shrink-0 ${
+            isLastRow && !isFilled
+              ? 'text-slate-300 cursor-not-allowed'
+              : 'bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-600 active:scale-90 shadow-2xs'
+          }`}
+          title="வரிசையை நீக்க"
         >
-          <Trash2 className="w-5 h-5 stroke-[2.2]" />
+          <Trash2 className="w-4 h-4 stroke-[2.2]" />
         </button>
       </div>
+
+      {/* Bottom Line: Price Fillup, Quantity Controls & Row Total Amount */}
+      <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-slate-100 gap-2">
+        {/* Directly Editable Price Fillup Field */}
+        <div className="flex items-center gap-1">
+          <span className="text-xs font-bold text-slate-500 font-tamil">விலை:</span>
+          <div className="relative flex items-center">
+            <span className="absolute left-2.5 text-xs font-bold text-slate-500">₹</span>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              value={priceInput}
+              onChange={(e) => handlePriceChange(e.target.value)}
+              placeholder="0"
+              className="w-20 pl-6 pr-2 py-1.5 bg-slate-50 border border-slate-300 focus:border-emerald-500 focus:bg-white rounded-xl text-base font-black text-slate-900 font-mono focus:outline-none transition-all"
+            />
+          </div>
+        </div>
+
+        {/* Quantity Controls */}
+        <div className="flex items-center gap-1">
+          <span className="text-xs font-bold text-slate-500 font-tamil">அளவு:</span>
+          <div className="flex items-center bg-slate-100 rounded-xl p-0.5 border border-slate-200">
+            <button
+              type="button"
+              onClick={() => onUpdateQuantity(item.id, Math.max(1, item.quantity - 1))}
+              disabled={item.quantity <= 1 || !isFilled}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-base transition-all ${
+                item.quantity <= 1 || !isFilled
+                  ? 'bg-slate-200/50 text-slate-400 cursor-not-allowed'
+                  : 'bg-white text-slate-800 shadow-2xs active:bg-slate-200 active:scale-95'
+              }`}
+            >
+              <Minus className="w-3.5 h-3.5 stroke-[3]" />
+            </button>
+
+            <span className="w-8 text-center text-lg font-black text-slate-900 font-mono">
+              {item.quantity}
+            </span>
+
+            <button
+              type="button"
+              onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
+              disabled={!isFilled}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-base transition-all ${
+                !isFilled
+                  ? 'bg-slate-200/50 text-slate-400 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white shadow-2xs active:scale-95'
+              }`}
+            >
+              <Plus className="w-3.5 h-3.5 stroke-[3]" />
+            </button>
+          </div>
+        </div>
+
+        {/* Row Total Amount */}
+        <div className="text-right shrink-0">
+          <span className="text-xs font-bold text-slate-400 block font-tamil leading-none">தொகை</span>
+          <span className="text-xl font-black text-emerald-800 font-tamil tracking-tight">
+            {formatINR(item.total)}
+          </span>
+        </div>
+      </div>
+
+      {/* Floating Autocomplete Suggestions Dropdown */}
+      {isOpen && !isFilled && (
+        <div
+          ref={dropdownRef}
+          className="absolute left-0 right-0 top-[52px] bg-white rounded-2xl border-2 border-emerald-500 shadow-2xl z-50 overflow-hidden max-h-64 overflow-y-auto animate-in fade-in slide-in-from-top-1 duration-100"
+        >
+          {suggestions.length > 0 ? (
+            <div className="divide-y divide-slate-100">
+              {suggestions.map((prod, index) => (
+                <button
+                  key={prod.id}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleSelect(prod);
+                  }}
+                  className={`w-full px-4 py-3 text-left flex items-center justify-between transition-colors ${
+                    index === 0
+                      ? 'bg-emerald-50/90 hover:bg-emerald-100 text-emerald-950 font-bold'
+                      : 'hover:bg-slate-50 text-slate-800'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-sm ${
+                      index === 0 ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {index === 0 ? <Check className="w-4 h-4 stroke-[3]" /> : prod.nameTamil.charAt(0)}
+                    </span>
+                    <div>
+                      <span className="text-lg font-bold font-tamil block leading-snug">
+                        {prod.nameTamil}
+                      </span>
+                      <span className="text-xs text-slate-400 font-medium">
+                        1 {prod.unit}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <span className="text-lg font-black text-emerald-700 font-tamil">
+                      {formatINR(prod.price)}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="p-4 text-center text-xs font-semibold text-slate-400 font-tamil">
+              பொருட்கள் எதுவும் கிடைக்கவில்லை
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

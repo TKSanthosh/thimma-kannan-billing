@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { CheckCircle } from 'lucide-react';
 import { BillItem, Product, Bill, ShopSettings, PaymentMethod } from '../types';
 import { BillingRow } from '../components/BillingRow';
-import { ProductSearchModal } from '../components/ProductSearchModal';
 import { PaymentModal } from '../components/PaymentModal';
 import { ReceiptModal } from '../components/ReceiptModal';
 import { calculateBillTotal, calculateRowTotal } from '../utils/calculations';
@@ -25,8 +24,6 @@ const createEmptyItem = (): BillItem => ({
 
 export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) => {
   const [items, setItems] = useState<BillItem[]>([createEmptyItem()]);
-  const [activeRowId, setActiveRowId] = useState<string | null>(null);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isReceiptOpen, setIsReceiptOpen] = useState(false);
   const [completedBill, setCompletedBill] = useState<Bill | null>(null);
@@ -40,16 +37,9 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
   const totalAmount = calculateBillTotal(items);
   const validItemsCount = items.filter(i => i.nameTamil && i.nameTamil.trim() !== '').length;
 
-  const handleOpenSearch = (rowId: string) => {
-    setActiveRowId(rowId);
-    setIsSearchOpen(true);
-  };
-
-  const handleSelectProduct = (product: Product) => {
-    if (!activeRowId) return;
-
+  const handleSelectProduct = (rowId: string, product: Product) => {
     setItems(prevItems => {
-      const rowIndex = prevItems.findIndex(i => i.id === activeRowId);
+      const rowIndex = prevItems.findIndex(i => i.id === rowId);
       if (rowIndex === -1) return prevItems;
 
       const updated = [...prevItems];
@@ -67,8 +57,8 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
         isCustomPrice: false
       };
 
-      // AUTOMATIC NEXT ROW CREATION:
-      // If the mother just filled the last row, automatically append a fresh empty row
+      // AUTOMATIC NEXT EMPTY ROW:
+      // If the selected row is the last row, automatically append a new empty fillup row
       const isLastRow = rowIndex === updated.length - 1;
       if (isLastRow) {
         updated.push(createEmptyItem());
@@ -76,8 +66,6 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
 
       return updated;
     });
-
-    setIsSearchOpen(false);
   };
 
   const handleUpdateQuantity = (rowId: string, newQty: number) => {
@@ -113,10 +101,30 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
     );
   };
 
+  const handleClearRow = (rowId: string) => {
+    setItems(prevItems =>
+      prevItems.map(item => {
+        if (item.id === rowId) {
+          return {
+            ...item,
+            productId: undefined,
+            nameTamil: '',
+            unitPrice: 0,
+            quantity: 1,
+            unit: 'பீஸ்',
+            total: 0,
+            isCustomPrice: false
+          };
+        }
+        return item;
+      })
+    );
+  };
+
   const handleRemoveRow = (rowId: string) => {
     setItems(prevItems => {
       const filtered = prevItems.filter(item => item.id !== rowId);
-      // Always ensure at least 1 empty row is present
+      // Ensure there's always at least one empty row at the bottom
       if (filtered.length === 0 || !filtered.some(i => !i.nameTamil)) {
         return filtered.length === 0 ? [createEmptyItem()] : [...filtered, createEmptyItem()];
       }
@@ -169,9 +177,9 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
 
   return (
     <div className="flex flex-col min-h-[calc(100vh-130px)] pb-32">
-      {/* Top Banner / Table Headers */}
-      <div className="bg-slate-200/90 px-4 py-2 text-xs font-bold text-slate-700 flex justify-between items-center sticky top-[64px] z-20 backdrop-blur-sm border-b border-slate-300">
-        <div className="w-1/2 font-tamil text-slate-800">பொருள்</div>
+      {/* Table Headers */}
+      <div className="bg-slate-200/90 px-4 py-2.5 text-xs font-bold text-slate-700 flex justify-between items-center sticky top-[64px] z-20 backdrop-blur-sm border-b border-slate-300">
+        <div className="w-1/2 font-tamil text-slate-800">பொருள் (பெயர் / தேடல்)</div>
         <div className="w-1/4 text-center font-tamil text-slate-800">அளவு</div>
         <div className="w-1/4 text-right font-tamil text-slate-800">தொகை</div>
       </div>
@@ -183,10 +191,13 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
             key={item.id}
             item={item}
             rowIndex={index}
-            onOpenSearch={handleOpenSearch}
+            products={products}
+            isLastRow={index === items.length - 1}
+            onSelectProduct={handleSelectProduct}
             onUpdateQuantity={handleUpdateQuantity}
             onUpdatePrice={handleUpdatePrice}
             onRemove={handleRemoveRow}
+            onClearRow={handleClearRow}
           />
         ))}
       </div>
@@ -219,14 +230,6 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
           </button>
         </div>
       </div>
-
-      {/* Product Search Modal */}
-      <ProductSearchModal
-        isOpen={isSearchOpen}
-        onClose={() => setIsSearchOpen(false)}
-        products={products}
-        onSelectProduct={handleSelectProduct}
-      />
 
       {/* Payment Modal */}
       <PaymentModal
