@@ -50,40 +50,40 @@ export const App: React.FC = () => {
         onNewBill={handleResetBilling}
       />
 
-      {/* Main Content Area */}
+      {/* Main Content Area - Keeps components active & preserves tab states */}
       <main className="flex-1 w-full max-w-lg mx-auto">
-        {currentTab === 'billing' && (
+        <div className={currentTab === 'billing' ? 'block' : 'hidden'}>
           <BillingPage
             key={billingKey}
             products={products}
             settings={settings}
           />
-        )}
+        </div>
 
-        {currentTab === 'products' && (
+        <div className={currentTab === 'products' ? 'block' : 'hidden'}>
           <ProductsPage
             products={products}
             onRefresh={loadData}
           />
-        )}
+        </div>
 
-        {currentTab === 'history' && (
+        <div className={currentTab === 'history' ? 'block' : 'hidden'}>
           <BillHistoryPage
             settings={settings}
           />
-        )}
+        </div>
 
-        {currentTab === 'sales' && (
+        <div className={currentTab === 'sales' ? 'block' : 'hidden'}>
           <SalesPage />
-        )}
+        </div>
 
-        {currentTab === 'settings' && (
+        <div className={currentTab === 'settings' ? 'block' : 'hidden'}>
           <SettingsPage
             settings={settings}
             onUpdateSettings={setSettings}
             onRefreshAll={loadData}
           />
-        )}
+        </div>
       </main>
 
       {/* Bottom Sticky Navigation */}

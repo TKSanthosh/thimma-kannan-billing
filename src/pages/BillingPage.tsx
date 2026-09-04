@@ -6,7 +6,7 @@ import { PaymentModal } from '../components/PaymentModal';
 import { ReceiptModal } from '../components/ReceiptModal';
 import { calculateBillTotal, calculateRowTotal } from '../utils/calculations';
 import { formatINR } from '../utils/currency';
-import { getNextBillNumber, saveBill } from '../services/storage';
+import { getNextBillNumber, saveBill, loadDraftBill, saveDraftBill, clearDraftBill } from '../services/storage';
 
 interface BillingPageProps {
   products: Product[];
@@ -23,7 +23,12 @@ const createEmptyItem = (): BillItem => ({
 });
 
 export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) => {
-  const [items, setItems] = useState<BillItem[]>([createEmptyItem()]);
+  // Load draft items from localStorage on initial render
+  const [items, setItems] = useState<BillItem[]>(() => {
+    const saved = loadDraftBill();
+    return saved && saved.length > 0 ? saved : [createEmptyItem()];
+  });
+
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isReceiptOpen, setIsReceiptOpen] = useState(false);
   const [completedBill, setCompletedBill] = useState<Bill | null>(null);
@@ -33,6 +38,11 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
   useEffect(() => {
     getNextBillNumber().then(num => setCurrentBillNumber(num));
   }, []);
+
+  // Save to localStorage whenever items change
+  useEffect(() => {
+    saveDraftBill(items);
+  }, [items]);
 
   const totalAmount = calculateBillTotal(items);
   const validItemsCount = items.filter(i => i.nameTamil && i.nameTamil.trim() !== '').length;
@@ -58,7 +68,6 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
       };
 
       // AUTOMATIC NEXT EMPTY ROW:
-      // If the selected row is the last row, automatically append a new empty fillup row
       const isLastRow = rowIndex === updated.length - 1;
       if (isLastRow) {
         updated.push(createEmptyItem());
@@ -124,7 +133,6 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
   const handleRemoveRow = (rowId: string) => {
     setItems(prevItems => {
       const filtered = prevItems.filter(item => item.id !== rowId);
-      // Ensure there's always at least one empty row at the bottom
       if (filtered.length === 0 || !filtered.some(i => !i.nameTamil)) {
         return filtered.length === 0 ? [createEmptyItem()] : [...filtered, createEmptyItem()];
       }
@@ -133,6 +141,7 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
   };
 
   const handleResetBill = () => {
+    clearDraftBill();
     setItems([createEmptyItem()]);
     getNextBillNumber().then(num => setCurrentBillNumber(num));
   };
@@ -180,7 +189,7 @@ export const BillingPage: React.FC<BillingPageProps> = ({ products, settings }) 
       {/* Table Headers */}
       <div className="bg-slate-200/90 px-4 py-2.5 text-xs font-bold text-slate-700 flex justify-between items-center sticky top-[64px] z-20 backdrop-blur-sm border-b border-slate-300">
         <div className="w-1/2 font-tamil text-slate-800">பொருள் (பெயர் / தேடல்)</div>
-        <div className="w-1/4 text-center font-tamil text-slate-800">அளவு</div>
+        <div className="w-1/4 text-center font-tamil text-slate-800">விலை / அளவு</div>
         <div className="w-1/4 text-right font-tamil text-slate-800">தொகை</div>
       </div>
 

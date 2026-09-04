@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import { Product, Bill, ShopSettings } from '../types';
+import { Product, Bill, ShopSettings, BillItem } from '../types';
 import { DEFAULT_PRODUCTS } from '../data/defaultProducts';
 import { generateSearchTerms } from '../utils/transliteration';
 
@@ -31,15 +31,70 @@ const DEFAULT_SETTINGS: ShopSettings = {
   currencySymbol: '₹'
 };
 
+const DRAFT_BILL_KEY = 'tk_draft_bill_items';
+const PRODUCTS_LOCAL_KEY = 'tk_products_cache';
+const SETTINGS_LOCAL_KEY = 'tk_settings_cache';
+const BILLS_LOCAL_KEY = 'tk_bills_cache';
+
 /**
- * Initialize database with default products and settings if empty
+ * Save draft bill in localStorage so tab switches or refreshes retain all items
+ */
+export function saveDraftBill(items: BillItem[]): void {
+  try {
+    localStorage.setItem(DRAFT_BILL_KEY, JSON.stringify(items));
+  } catch (err) {
+    console.error('Failed to save draft bill to localStorage', err);
+  }
+}
+
+/**
+ * Load draft bill from localStorage
+ */
+export function loadDraftBill(): BillItem[] | null {
+  try {
+    const saved = localStorage.getItem(DRAFT_BILL_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load draft bill from localStorage', err);
+  }
+  return null;
+}
+
+/**
+ * Clear draft bill from localStorage
+ */
+export function clearDraftBill(): void {
+  try {
+    localStorage.removeItem(DRAFT_BILL_KEY);
+  } catch (err) {
+    console.error('Failed to clear draft bill', err);
+  }
+}
+
+/**
+ * Initialize database with default products and settings
  */
 export async function initializeDatabase(): Promise<void> {
   try {
+    // Check localStorage cache first
+    const cachedProds = localStorage.getItem(PRODUCTS_LOCAL_KEY);
+    if (!cachedProds) {
+      localStorage.setItem(PRODUCTS_LOCAL_KEY, JSON.stringify(DEFAULT_PRODUCTS));
+    }
+
+    const cachedSettings = localStorage.getItem(SETTINGS_LOCAL_KEY);
+    if (!cachedSettings) {
+      localStorage.setItem(SETTINGS_LOCAL_KEY, JSON.stringify(DEFAULT_SETTINGS));
+    }
+
     const productCount = await db.products.count();
     if (productCount === 0) {
       await db.products.bulkAdd(DEFAULT_PRODUCTS);
-      console.log('Default Tamil pooja products populated.');
     }
 
     const settings = await db.settings.get('shop_config');
@@ -52,19 +107,31 @@ export async function initializeDatabase(): Promise<void> {
 }
 
 /**
- * Get all products
+ * Get all products (IndexedDB with instant localStorage fallback)
  */
 export async function getAllProducts(): Promise<Product[]> {
   try {
     const list = await db.products.toArray();
-    if (list.length === 0) {
-      await initializeDatabase();
-      return await db.products.toArray();
+    if (list.length > 0) {
+      localStorage.setItem(PRODUCTS_LOCAL_KEY, JSON.stringify(list));
+      return list;
     }
-    return list;
-  } catch {
-    return DEFAULT_PRODUCTS;
+  } catch (err) {
+    console.warn('Dexie error, reading from localStorage:', err);
   }
+
+  // Fallback to localStorage
+  try {
+    const cached = localStorage.getItem(PRODUCTS_LOCAL_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {}
+
+  return DEFAULT_PRODUCTS;
 }
 
 /**
@@ -86,7 +153,14 @@ export async function addProduct(
     createdAt: Date.now()
   };
 
-  await db.products.put(newProduct);
+  try {
+    await db.products.put(newProduct);
+  } catch {}
+
+  const current = await getAllProducts();
+  const updated = [newProduct, ...current.filter(p => p.id !== newProduct.id)];
+  localStorage.setItem(PRODUCTS_LOCAL_KEY, JSON.stringify(updated));
+
   return newProduct;
 }
 
@@ -95,29 +169,44 @@ export async function addProduct(
  */
 export async function updateProduct(product: Product): Promise<void> {
   product.searchTerms = generateSearchTerms(product.nameTamil);
-  await db.products.put(product);
+  try {
+    await db.products.put(product);
+  } catch {}
+
+  const current = await getAllProducts();
+  const updated = current.map(p => p.id === product.id ? product : p);
+  localStorage.setItem(PRODUCTS_LOCAL_KEY, JSON.stringify(updated));
 }
 
 /**
  * Delete a product
  */
 export async function deleteProduct(id: string): Promise<void> {
-  await db.products.delete(id);
+  try {
+    await db.products.delete(id);
+  } catch {}
+
+  const current = await getAllProducts();
+  const updated = current.filter(p => p.id !== id);
+  localStorage.setItem(PRODUCTS_LOCAL_KEY, JSON.stringify(updated));
 }
 
 /**
  * Reset products to defaults
  */
 export async function resetDefaultProducts(): Promise<void> {
-  await db.products.clear();
-  await db.products.bulkAdd(DEFAULT_PRODUCTS);
+  try {
+    await db.products.clear();
+    await db.products.bulkAdd(DEFAULT_PRODUCTS);
+  } catch {}
+  localStorage.setItem(PRODUCTS_LOCAL_KEY, JSON.stringify(DEFAULT_PRODUCTS));
 }
 
 /**
  * Get next sequential bill number
  */
 export async function getNextBillNumber(): Promise<number> {
-  const settings = await db.settings.get('shop_config') || DEFAULT_SETTINGS;
+  const settings = await getShopSettings();
   const nextNum = (settings.lastBillNumber || 1000) + 1;
   return nextNum;
 }
@@ -131,37 +220,71 @@ export async function saveBill(bill: Omit<Bill, 'id'>): Promise<Bill> {
     id: 'bill_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
   };
 
-  await db.bills.put(fullBill);
+  try {
+    await db.bills.put(fullBill);
+  } catch {}
+
+  // Sync to bills in localStorage
+  const existingBills = await getAllBills();
+  const updatedBills = [fullBill, ...existingBills.filter(b => b.id !== fullBill.id)];
+  localStorage.setItem(BILLS_LOCAL_KEY, JSON.stringify(updatedBills));
 
   // Update last bill number in settings
-  const settings = await db.settings.get('shop_config') || DEFAULT_SETTINGS;
+  const settings = await getShopSettings();
   if (fullBill.billNumber >= settings.lastBillNumber) {
     settings.lastBillNumber = fullBill.billNumber;
-    await db.settings.put(settings);
+    await updateShopSettings(settings);
   }
+
+  // Clear draft bill since bill is completed
+  clearDraftBill();
 
   return fullBill;
 }
 
 /**
- * Get all completed bills (sorted newest first)
+ * Get all completed bills
  */
 export async function getAllBills(): Promise<Bill[]> {
   try {
     const list = await db.bills.orderBy('createdAt').reverse().toArray();
-    return list;
-  } catch (err) {
-    console.error('Failed to get bills:', err);
-    return [];
-  }
+    if (list.length > 0) {
+      localStorage.setItem(BILLS_LOCAL_KEY, JSON.stringify(list));
+      return list;
+    }
+  } catch {}
+
+  try {
+    const cached = localStorage.getItem(BILLS_LOCAL_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+
+  return [];
 }
 
 /**
  * Get shop settings
  */
 export async function getShopSettings(): Promise<ShopSettings> {
-  const settings = await db.settings.get('shop_config');
-  return settings || DEFAULT_SETTINGS;
+  try {
+    const settings = await db.settings.get('shop_config');
+    if (settings) {
+      localStorage.setItem(SETTINGS_LOCAL_KEY, JSON.stringify(settings));
+      return settings;
+    }
+  } catch {}
+
+  try {
+    const cached = localStorage.getItem(SETTINGS_LOCAL_KEY);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch {}
+
+  return DEFAULT_SETTINGS;
 }
 
 /**
@@ -170,7 +293,10 @@ export async function getShopSettings(): Promise<ShopSettings> {
 export async function updateShopSettings(settings: Partial<ShopSettings>): Promise<ShopSettings> {
   const current = await getShopSettings();
   const updated = { ...current, ...settings };
-  await db.settings.put(updated);
+  try {
+    await db.settings.put(updated);
+  } catch {}
+  localStorage.setItem(SETTINGS_LOCAL_KEY, JSON.stringify(updated));
   return updated;
 }
 
@@ -178,8 +304,8 @@ export async function updateShopSettings(settings: Partial<ShopSettings>): Promi
  * Export all DB data as JSON for offline backup
  */
 export async function exportDatabaseBackup(): Promise<string> {
-  const products = await db.products.toArray();
-  const bills = await db.bills.toArray();
+  const products = await getAllProducts();
+  const bills = await getAllBills();
   const settings = await getShopSettings();
 
   const backupData = {
@@ -204,17 +330,21 @@ export async function importDatabaseBackup(jsonString: string): Promise<boolean>
       throw new Error('Invalid backup file');
     }
 
-    await db.products.clear();
-    await db.products.bulkAdd(data.products);
+    try {
+      await db.products.clear();
+      await db.products.bulkAdd(data.products);
+      if (data.bills && Array.isArray(data.bills)) {
+        await db.bills.clear();
+        await db.bills.bulkAdd(data.bills);
+      }
+      if (data.settings) {
+        await db.settings.put(data.settings);
+      }
+    } catch {}
 
-    if (data.bills && Array.isArray(data.bills)) {
-      await db.bills.clear();
-      await db.bills.bulkAdd(data.bills);
-    }
-
-    if (data.settings) {
-      await db.settings.put(data.settings);
-    }
+    localStorage.setItem(PRODUCTS_LOCAL_KEY, JSON.stringify(data.products));
+    if (data.bills) localStorage.setItem(BILLS_LOCAL_KEY, JSON.stringify(data.bills));
+    if (data.settings) localStorage.setItem(SETTINGS_LOCAL_KEY, JSON.stringify(data.settings));
 
     return true;
   } catch (err) {
